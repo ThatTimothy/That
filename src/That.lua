@@ -889,6 +889,16 @@ function That:Init()
 		--Setup client methods
 		That.CreateController = CreateService --Controllers = Services on client
 		That.GetController = GetService
+		
+		--Allow GetService on client
+		That.GetService = function(a1, a2)
+			local n = a1
+			if a2 then
+				n = a2
+			end
+			
+			return That.Services[n]
+		end
 
 		--Setup client event connection
 
