@@ -599,30 +599,47 @@ function That:Configure(options)
 end
 
 -- Requires the passed items
-function That:Require(root)
+function That:Require(root, isDeep)
 	--Check for validity
 	AssertUp(typeof(root) == "Instance", 
 		"Passed root must be an instance for That:Require(root)")
 	
-	--Make function for handling requires
-	local function HandleRequire(req)
-		--Handle non-ModuleScript contents
-		if not req:IsA("ModuleScript") then
-			That:Require(req)
-			return
+	--Check for ModuleScript
+	if root:IsA("ModuleScript") then
+		SpawnThread(require, root)
+	else
+		--Make function for handling requires
+		local function HandleRequire(req)
+			--Handle non-ModuleScript contents
+			if not req:IsA("ModuleScript") then
+				if isDeep then
+					That:Require(req)
+				end
+				return
+			end
+
+			--Spawn the requiring
+			SpawnThread(require, req)
 		end
 
-		--Spawn the requiring
-		SpawnThread(require, req)
-	end
+		--Require items that exist
+		for _, req in ipairs(root:GetChildren()) do
+			HandleRequire(req)
+		end
 
-	--Require items that exist
-	for _, req in ipairs(root:GetChildren()) do
-		HandleRequire(req)
+		--Support late-loaded items because of replication delays
+		root.ChildAdded:Connect(HandleRequire)
 	end
+end
 
-	--Support late-loaded items because of replication delays
-	root.ChildAdded:Connect(HandleRequire)
+-- Requires the passed items, and performs a deep require
+function That:DeepRequire(root)
+	--Check for validity
+	AssertUp(typeof(root) == "Instance" and not root:IsA("ModuleScript"), 
+		"Passed root must be an instance for That:DeepRequire(root)")
+	
+	--Perform Deep Require
+	That:DeepRequire(root, true)
 end
 
 -- Initializes the framework for usage
