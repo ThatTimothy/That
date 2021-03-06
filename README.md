@@ -1,6 +1,6 @@
 # That Framework
 
-<img align="right" src="logo/512rounded.png" style="margin-left: 15px">
+<img align="right" src="logo/512rounded.png" style="margin-left: 15px; width: 256px;">
 
 A Roblox Game Framework which simplies communication between aspects of the game and unifies the Server-Client communcation boundraries.
 
