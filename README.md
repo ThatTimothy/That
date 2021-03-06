@@ -4,4 +4,4 @@
 
 A Roblox Game Framework which simplies communication between aspects of the game and unifies the Server-Client communcation boundraries.
 
-[Read The Docs](https://github.com/ThatTimothy/That) for more information.
+[Read The Docs](https://github.com/ThatTimothy/That/wiki) for more information.
