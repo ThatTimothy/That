@@ -1,8 +1,6 @@
 local That = require(game:GetService("ReplicatedStorage").That)
 
-That:Start({
-	Base = game:GetService("ReplicatedStorage").Base,
-	Required = game:GetService("ServerStorage").Services,
+That:Configure({
 	References = {
 		Modules = game:GetService("ServerStorage").Modules,
 		Shared = game:GetService("ReplicatedStorage").Shared
@@ -18,3 +16,7 @@ That:Start({
 	--DebugLog = true,
 	--LogPrefix = "",
 })
+
+That:Require(game:GetService("ServerStorage").Services)
+
+That:Start()

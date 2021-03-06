@@ -12,7 +12,7 @@
 	
 	DevFourm: <coming soon™>
 	GitHub: https://github.com/ThatTimothy/That
-	Docs: <coming soon™>
+	Docs: https://github.com/ThatTimothy/That/wiki
 	Demo: <coming soon™>
 	
 	
@@ -53,7 +53,6 @@
 	Feel free to make any suggestions, I'm open to them. However, I want to keep the current functionality.
 ]]
 
-
 -- It's time to start That.
 local That = {}
 
@@ -66,13 +65,14 @@ local HttpService = game:GetService("HttpService") --Only use is for GenerateGUI
 local isClient = RunService:IsClient() --Client behavior must be different
 
 -- Constants
+local CONST_THAT_VALID_OPTIONS_BOTH = --Valid options for both client and server
+	{"References", "MaxInitTimeout", "DebugLog", "LogPrefix"}
+local CONST_THAT_VALID_OPTIONS_SERVER = --Valid options only for server
+	{"HandleInvalidAction", "ClearDataAfter"}
 local CONST_THAT_STORAGE_INDEX = "__THAT_UNIQUE_INDEX" --Unique key to distinguish services.
 local CONST_THAT_HANDSHAKE_NAME = "__THAT_HANDSHAKE" --Unique name to distinguish handshake event.
 local CONST_THAT_LOG_PREFIX = "" --Change this if you want a log prefix
 local CONST_AUTH_KEY_RANGE = { Min = 0, Max = math.pow(2, 30) } --The range to use for Auth keys
-
-local THAT_BASE_DIR
-local THAT_REQUIRE_DIR
 
 local THAT_METATABLE --Global metatable to inject whenever possible
 local THAT_EVENT --An event class setup in Init, used as a proxy to real remote events
@@ -386,15 +386,28 @@ local function GetService(selfOrName, name)
 end
 
 -- Creates a service. On the client, controllers are just renamed services (they are the same thing essentially)
-local function CreateService(serviceName)
+local function CreateService(selfOrName, name)
+	local serviceName = selfOrName
+	
+	--Support both .CreateService and :CreateService
+	if typeof(selfOrName) ~= 'string' then
+		serviceName = name
+	end
+	
 	--Check for string name
 	AssertUp(serviceName and typeof(serviceName) == 'string', 
-		("Please provide name to That:CreateService(name)"):gsub("Service", ROOT_NAME))
+		("Please provide name to That:CreateService(name)"):gsub("Service", ROOT_NAME), 3)
 	
 	--Make sure it has a unique name
 	if rawget(ROOT_DIR, serviceName) then
-		local msg = "A %s with the name `%s` already exists, please use a different name."
-		ErrorUp(string.format(msg, ROOT_NAME:lower(), serviceName))
+		local message = "A %s with the name `%s` already exists, please use a different name."
+		ErrorUp(string.format(message, ROOT_NAME:lower(), serviceName))
+	end
+	
+	--Make sure it's not too late
+	if THAT_STARTED then
+		local message = "Cannot create %s %s after framework has already started."
+		ErrorUp(string.format(message, ROOT_NAME, serviceName))
 	end
 
 	--Create a wrapper to base the service on
@@ -405,7 +418,7 @@ local function CreateService(serviceName)
 		--Create remotes folder for service
 		local folder = Instance.new("Folder")
 		folder.Name = serviceName
-		folder.Parent = THAT_BASE_DIR
+		folder.Parent = script
 
 		--Create client events folder for service
 		local clientF = Instance.new("Folder")
@@ -519,19 +532,22 @@ local function CreateService(serviceName)
 	return NewService
 end
 
---Initialize the framework
-function That:Start(options)
-	--Mark That as itself
-	That[CONST_THAT_STORAGE_INDEX] = CONST_THAT_STORAGE_INDEX
-	
-	--Prevent additional calls of :Start
-	That.Start = function()
-		ErrorUp("That:Start(options) can only be called once!")
-	end
-	
-	--Make sure options exists
+-- Configures the framework
+function That:Configure(options)
+	--Check for options
 	AssertUp(options and typeof(options) == "table", 
-		"That:Start(options) failed, please provide a valid options table.")
+		"Provide a valid options table to That:Configure(options)")
+	
+	--Make sure all options are valid
+	for name, value in pairs(options) do
+		if not table.find(CONST_THAT_VALID_OPTIONS_BOTH, name) then
+			if isClient or not table.find(CONST_THAT_VALID_OPTIONS_SERVER, name) then
+				--Not a valid option
+				local message = "Unknown option %s passed to That:Configure(options)"
+				ErrorUp(string.format(message, name))
+			end
+		end
+	end
 	
 	--Default timeout option
 	if not options.MaxInitTimeout then
@@ -541,12 +557,12 @@ function That:Start(options)
 		AssertUp(typeof(options.MaxInitTimeout) == "number",
 			"That:Start(options) failed, options.MaxInitTimeout must be a number.")
 	end
-	
+
 	--Default logging option
 	if options.DebugLog == nil then
 		options.DebugLog = true
 	end
-	
+
 	--Default options if server
 	if not isClient then
 		--Default ClearDataAfter option
@@ -557,7 +573,7 @@ function That:Start(options)
 			AssertUp(typeof(options.ClearDataAfter) == "number",
 				"That:Start(options) failed, options.ClearDataAfter must be a number.")
 		end
-		
+
 		--Default HandleInvalidAction callback (if server)
 		if not options.HandleInvalidAction then
 			options.HandleInvalidAction = function(player, id)
@@ -572,27 +588,47 @@ function That:Start(options)
 				"That:Start(options) failed, options.HandleInvalidAction must be a function.")
 		end
 	end
-	
-	--Change logging prefix
+
+	--Change logging prefix if set
 	if options.LogPrefix then
 		CONST_THAT_LOG_PREFIX = options.LogPrefix
 	end
 	
-	--Check for valid base dir
-	AssertUp(options.Base, 
-		"That:Start(options) failed, please provide options.Base")
-	AssertUp(typeof(options.Base) == "Instance", 
-		"That:Start(options) failed, options.Base must be an instance")
+	--Save options for use
+	THAT_OPTIONS = options
+end
 
-	THAT_BASE_DIR = options.Base
+-- Requires the passed items
+function That:Require(root)
+	--Check for validity
+	AssertUp(typeof(root) == "Instance", 
+		"Passed root must be an instance for That:Require(root)")
+	
+	--Make function for handling requires
+	local function HandleRequire(req)
+		--Handle non-ModuleScript contents
+		if not req:IsA("ModuleScript") then
+			That:Require(req)
+			return
+		end
 
-	--Check for valid required dir (only client has controllers)
-	AssertUp(options.Required, 
-		"That:Start(options) failed, please provide options.Required")
-	AssertUp(typeof(options.Required) == "Instance", 
-		"That:Start(options) failed, options.Required must be an instance")
+		--Spawn the requiring
+		SpawnThread(require, req)
+	end
 
-	THAT_REQUIRE_DIR = options.Required
+	--Require items that exist
+	for _, req in ipairs(root:GetChildren()) do
+		HandleRequire(req)
+	end
+
+	--Support late-loaded items because of replication delays
+	root.ChildAdded:Connect(HandleRequire)
+end
+
+-- Initializes the framework for usage
+function That:Init()
+	--Can only be called once
+	That.Init = nil
 	
 	--Setup services table which supports :GetService
 	That.Services = setmetatable({}, {
@@ -602,14 +638,15 @@ function That:Start(options)
 		end,
 	})
 	
+	--Run client / server setup depending on where we are
 	if isClient then
 		--Commence "That Handshake"
-		local handshakeEvent = THAT_BASE_DIR:WaitForChild(CONST_THAT_HANDSHAKE_NAME, math.huge)
+		local handshakeEvent = script:WaitForChild(CONST_THAT_HANDSHAKE_NAME, math.huge)
 		local authKeys = handshakeEvent:InvokeServer()
-		
+
 		--Destroy handshake event LOCALLY to prevent confusion with later items
 		handshakeEvent:Destroy()
-		
+
 		--Get generators setup
 		local authKeyGenerators = {}
 		for serviceName, methods in pairs(authKeys) do
@@ -622,70 +659,70 @@ function That:Start(options)
 				}
 			end
 		end
-		
+
 		--Define client service creator
 		local function createClientService(serviceName)
 			--Support ClientService.Event:Connect()
-			
+
 			local ClientService = setmetatable({}, {
 				__index = function(tab, eventName)
 					--On a new index, create a new client event to handle stuff
 					local ClientEvent = THAT_EVENT.new(serviceName, eventName)
-					
+
 					--Set it so we don't make duplicates
 					rawset(tab, eventName, ClientEvent)
-					
+
 					--Return it
 					return ClientEvent
 				end,
 			})
-			
+
 			That.Services[serviceName] = ClientService
 		end
-		
+
 		--Define client variables
-		
+
 		--On the client, controllers are basically services
 		That.Controllers = That.Services
-		
+
 		--For services on the client, error if one doesn't exist, and make our client services as needed
 		That.Services = setmetatable({}, {
 			__index = function(tab, serviceName)
-				local service = THAT_BASE_DIR:FindFirstChild(serviceName)
-				
+				local service = script:FindFirstChild(serviceName)
+
 				if not service then
 					ErrorUp(string.format('Service "%s" does not exist!', serviceName))
 				end
-				
+
 				--Create a client service
 				createClientService(serviceName)
-				
+
 				--Return the proper client service
 				return tab[serviceName]
 			end,
 		})
-		
+
 		--Define basic handler for use
 		local Signal = {}
 		Signal.__index = Signal
-		
+
 		--Creates a singal
 		function Signal.new(handler, root)
 			local newSignal = {
 				_handler = handler,
 				_root = root,
 			}
-			
+
 			setmetatable(newSignal, Signal)
-			
+
 			return newSignal
 		end
-		
+
 		--Spawns handler in a new thread with passed arguments
 		function Signal:Fire(...)
 			SpawnThread(self._handler, ...)
 		end
-		
+
 		--Disconnects signal by removing itself from it's root
 		function Signal:Disconnect()
 			self._root:Disconnect(self)
@@ -693,16 +730,16 @@ function That:Start(options)
 
 		--Add aliases
 		Signal.Destroy = Signal.Disconnect
-		
+
 		--Make services on the client a custom class
 		THAT_EVENT = {}
 		THAT_EVENT.__index = THAT_EVENT
-		
+
 		--Constant metatable which errors not to index itself
 		local DontIndexMe = {__index = function()
 			ErrorUp("To get a value from a method, don't index directly! Use :Get first!")
 		end}
-		
+
 		--Handle Service.THAT_EVENT(...) or Service:THAT_EVENT(...)
 		THAT_EVENT.__call = function(calledOn, arg1, ...)
 			--Define needed constants
@@ -710,7 +747,7 @@ function That:Start(options)
 			local eventName = calledOn._eventName
 			local serviceName = calledOn._serviceName
 			local parentService = That.Services[serviceName]
-			
+
 			--Check for an actual remote event to use
 			local RemoteEvent = serverEvents:FindFirstChild(eventName)
 			if RemoteEvent then
@@ -719,7 +756,7 @@ function That:Start(options)
 				local key1 = generateAuthKey(generators.AuthKeyGen1)
 				local key2 = generateAuthKey(generators.AuthKeyGen2)
 				--Event methods can be called in . or : syntax, support both
-				
+
 				--If arg1 is the service it was called on, don't pass it through the remote event (: syntax passes self)
 				--Normally, without the client-server barrier, : syntax would work, so make it appear that way
 				if arg1 == parentService then
@@ -729,13 +766,13 @@ function That:Start(options)
 					--Pass arg1 on
 					RemoteEvent:FireServer(key1, arg1, ...)
 				end
-				
+
 				--Keep track of id
 				calledOn._onId += 1
 				local thisId = calledOn._onId
-				
+
 				local requestTime = time()
-				
+
 				--Return a proxy which will get the result if :Get() is called
 				return setmetatable({
 					Get = function()
@@ -765,11 +802,11 @@ function That:Start(options)
 				ErrorUp(string.format(message, serviceName, eventName, serviceName, listOfAllMethods))
 			end
 		end
-		
+
 		--Handle creation of a new client event
 		function THAT_EVENT.new(serviceName, eventName)
-			local serverEvents = THAT_BASE_DIR[serviceName]["Server Events"]
-			
+			local serverEvents = script[serviceName]["Server Events"]
+
 			--Define private fields for use by this class
 			local newEvent = {
 				_serviceName = serviceName,
@@ -778,22 +815,22 @@ function That:Start(options)
 				_onId = 0,
 				_signals = {}
 			}
-			
+
 			return setmetatable(newEvent, THAT_EVENT)
 		end
-		
+
 		--Connects a handler to a new singal and stores it in this event
 		function THAT_EVENT:Connect(handler)
 			local signal = Signal.new(handler, self)
 			self._signals[signal] = true
 			return signal
 		end
-		
+
 		--Disconnects all the siginals
 		function THAT_EVENT:DisconnectAll()
 			self._signals = {}
 		end
-		
+
 		--Disconnects a specific signal, or alias to DisconnectAll
 		function THAT_EVENT:Disconnect(signal)
 			if not signal then
@@ -802,7 +839,7 @@ function That:Start(options)
 				self._signals[signal] = nil
 			end
 		end
-		
+
 		--Fires all connections to this signal with the specified arguments
 		function THAT_EVENT:Fire(...)
 			local firedSomething = false
@@ -810,7 +847,7 @@ function That:Start(options)
 				signal:Fire(...)
 				firedSomething = true
 			end
-			
+
 			--If we didn't fire anything, log debug information
 			if not firedSomething then
 				local eventPath = string.format("%s.%s", self._serviceName, self._eventName)
@@ -826,77 +863,77 @@ function That:Start(options)
 				end
 			end
 		end
-		
-		
+
+
 		--Setup client values
 		ROOT_DIR = That.Controllers
 		ROOT_NAME = "Controller"
-		
+
 		--Setup client methods
 		That.CreateController = CreateService --Controllers = Services on client
 		That.GetController = GetService
-		
+
 		--Setup client event connection
-		
+
 		--Handles an event from serviceName.eventName
 		local function handleEventFromService(serviceName, eventName, ...)
 			--Find the service event for the item
 			local serviceEvent = That.Services[serviceName][eventName]
-			
+
 			--Fire it
 			serviceEvent:Fire(...)
 		end
-		
+
 		--Handles a new client remote event that we can use
 		local function handleNewClientEvent(newClientEvent)
 			--Get constants that are needed
 			local serviceName = newClientEvent.Parent.Parent.Name
 			local name = newClientEvent.Name
-			
+
 			--Setup a connection to the new remote event
 			newClientEvent.OnClientEvent:Connect(function(...)
 				handleEventFromService(serviceName, name, ...)
 			end)
 		end
-		
+
 		--Handle new service folders that are added
 		local function handleNewServiceFolder(serviceFolder)
 			--Make sure it's a folder
 			if not serviceFolder:IsA("Folder") then return end
-			
+
 			--Find client events folder
 			local clientEventsFolder = serviceFolder:WaitForChild("Client Events")
-			
+
 			--Create events for the existing children
 			for _, item in ipairs(clientEventsFolder:GetChildren()) do
 				handleNewClientEvent(item)
 			end
-			
+
 			--Create events for newer children
 			clientEventsFolder.ChildAdded:Connect(handleNewClientEvent)
 		end
-		
+
 		--Wait for services to load
 		for serviceName, methods in pairs(authKeys) do
-			THAT_BASE_DIR:WaitForChild(serviceName)
+			script:WaitForChild(serviceName)
 		end
-		
+
 		--Handle loaded services
-		for _, serviceFolder in ipairs(THAT_BASE_DIR:GetChildren()) do
+		for _, serviceFolder in ipairs(script:GetChildren()) do
 			handleNewServiceFolder(serviceFolder)
 		end
 	else
 		--Setup root directory
 		ROOT_DIR = That.Services
-		
+
 		--Setup server methods
 		That.CreateService = CreateService
 		That.GetService = GetService
-		
+
 		--Setup server event proxy
 		THAT_EVENT = {}
 		THAT_EVENT.__index = THAT_EVENT
-		
+
 		--Creates a new client event
 		function THAT_EVENT.new(root, name)
 			--Find a remote event,
@@ -907,18 +944,18 @@ function That:Start(options)
 				remote.Name = name
 				remote.Parent = root
 			end
-			
+
 			--Create an event, with private field remoteEvent
 			local newEvent = {
 				_remoteEvent = remote,
 			}
-			
+
 			setmetatable(newEvent, THAT_EVENT)
-			
+
 			--Return newly created event
 			return newEvent
 		end
-		
+
 		--Fires item if the condition function doesn't exist or returns true
 		function THAT_EVENT:FireIf(item, conditionF, ...)
 			--Check for item being a list of players
@@ -929,13 +966,13 @@ function That:Start(options)
 						error("ClientEvent:Fire(players, ...) requires players to be a valid table of only players")
 					end
 				end
-				
+
 				--Only contains players
 				for _, obj in pairs(item) do
 					--Do check for each
 					self:FireIf(obj, conditionF, ...)
 				end
-				
+
 			else
 				--Check for player
 				assert(IsPlayer(item),
@@ -951,36 +988,36 @@ function That:Start(options)
 				end
 			end
 		end
-		
+
 		--Fires a player if the condition function passes, acts on every player
 		function THAT_EVENT:FireAllIf(conditionF, ...)
 			self:FireIf(Players:GetPlayers(), conditionF, ...)
 		end
-		
+
 		--Fires a player, or players if item is a table of players
 		function THAT_EVENT:Fire(item, ...)
 			self:FireIf(item, nil, ...)
 		end
-		
+
 		--Fires all players
 		function THAT_EVENT:FireAll(...)
 			self:Fire(Players:GetPlayers(), ...)
 		end
-		
+
 		--Fires all players that aren't the passed player
 		function THAT_EVENT:FireOthers(plr, ...)
 			self:FireIf(Players:GetPlayers(), function(item)
 				return item ~= plr
 			end)
 		end
-		
+
 		--Name aliases that are commonly used, feel free to add your own
 		THAT_EVENT.FireClient = THAT_EVENT.Fire
 		THAT_EVENT.FireClients = THAT_EVENT.Fire
 		THAT_EVENT.FireAllClients = THAT_EVENT.FireAll
 		THAT_EVENT.FireOtherClients = THAT_EVENT.FireOthers
 	end
-	
+
 	--Setup metatable
 	THAT_METATABLE = {
 		__index = function(tab, index)
@@ -993,30 +1030,17 @@ function That:Start(options)
 			end
 		end
 	}
-	
-	--Save settings for later use
-	THAT_OPTIONS = options
-	
-	--Define start for debugging purposes
-	local start = os.clock()
-	
+
 	--Set attributes on Base folder, if it's the server
 	if not isClient then
-		THAT_BASE_DIR:SetAttribute("THAT_LOADED", false)
-		THAT_BASE_DIR:SetAttribute("THAT_INITED", false)
-		THAT_BASE_DIR:SetAttribute("THAT_STARTED", false)
+		script:SetAttribute("THAT_LOADED", false)
+		script:SetAttribute("THAT_INITED", false)
+		script:SetAttribute("THAT_STARTED", false)
 	end
-	
+
 	--Allow references to be LazyLoaded (meaning they are required only once requested to be used)
-	if options.References then
-		AssertUp(typeof(options.References) == "table", 
-			"That:Start(options) failed, options.References must be a table of instance")
-		for name, root in pairs(options.References) do
-			AssertUp(typeof(name) == "string", 
-				"That:Start(options) failed, options.References must be a table of instance")
-			AssertUp(typeof(root) == "Instance", 
-				"That:Start(options) failed, options.References must be a table of instance")
-			
+	if THAT_OPTIONS.References then
+		for name, root in pairs(THAT_OPTIONS.References) do
 			--Check for valid naming (Can't use stuff that already exists)
 			if not That[name] then
 				--Lazy load module scripts
@@ -1026,33 +1050,21 @@ function That:Start(options)
 			end
 		end
 	end
-	
-	--Make function for handling requires
-	local function HandleRequire(req)
-		--Handle non-ModuleScript contents
-		if not req:IsA("ModuleScript") then return end
-		
-		--If framework already started, it's too late
-		if THAT_STARTED then
-			local message = "Required items cannot be added after framework start (%s)"
-			error(string.format(message, req:GetFullName()))
-		end
-		
-		--Spawn the requiring
-		SpawnThread(require, req)
+end
+
+-- Starts the framework
+function That:Start()
+	--Prevent additional calls of :Start
+	That.Start = function()
+		ErrorUp("That:Start(options) can only be called once!")
 	end
 	
-	--Require items that exist
-	for _, req in ipairs(THAT_REQUIRE_DIR:GetChildren()) do
-		HandleRequire(req)
-	end
-	
-	--Support late-loaded requires (just in case™) (also replication can be weird so)
-	THAT_REQUIRE_DIR.ChildAdded:Connect(HandleRequire)
+	--Define start for debugging purposes
+	local start = os.clock()
 	
 	--If on server, mark services as loaded
 	if not isClient then
-		THAT_BASE_DIR:SetAttribute("THAT_LOADED", true)
+		script:SetAttribute("THAT_LOADED", true)
 	end
 	
 	--Toggle allowing Init & Start methods to run
@@ -1087,13 +1099,13 @@ function That:Start(options)
 					
 					--Log the initialization
 					local formattedTime = FormatTime(os.clock() - last.InvokedAt)
-					if os.clock() - start >= options.MaxInitTimeout then
+					if os.clock() - start >= THAT_OPTIONS.MaxInitTimeout then
 						--We took too long, warn the user
 						local message = CONST_THAT_LOG_PREFIX .. 
 							'"%s" took %s to :Init(), but has now successfully initialized. Do not yield in :Init() methods!'
 						warn(CONST_THAT_LOG_PREFIX .. string.format(message, last.Name, formattedTime))
-					elseif options.DebugLog then
-						--Init was normal, only log if options.DebugLog
+					elseif THAT_OPTIONS.DebugLog then
+						--Init was normal, only log if THAT_OPTIONS.DebugLog
 						local message = CONST_THAT_LOG_PREFIX .. 
 							'"%s" initialized (%s).'
 						print(message:format(last.Name, formattedTime))
@@ -1108,6 +1120,7 @@ function That:Start(options)
 			end
 		end
 		
+		--We don't want to spam the output
 		local alreadyWarned = false
 		
 		--Wait for inits to finish, if it's the original startup
@@ -1115,7 +1128,7 @@ function That:Start(options)
 			RunService.Stepped:Wait()
 			
 			--Check for max timeout
-			if os.clock() - start >= options.MaxInitTimeout then
+			if os.clock() - start >= THAT_OPTIONS.MaxInitTimeout then
 				if not alreadyWarned then
 					--Get the required items that failed for logging
 					local reqsName = ""
@@ -1143,7 +1156,7 @@ function That:Start(options)
 			
 			--If on server, mark services as inited
 			if not isClient then
-				THAT_BASE_DIR:SetAttribute("THAT_INITED", true)
+				script:SetAttribute("THAT_INITED", true)
 			end
 
 			--Log inited if logging enabled
@@ -1280,10 +1293,10 @@ function That:Start(options)
 			return false
 		end
 		
-		handshake.Parent = THAT_BASE_DIR
+		handshake.Parent = script
 		
 		--Don't check every frame, but check often enough that data is removed fast enough
-		local interval = options.ClearDataAfter / 5 
+		local interval = THAT_OPTIONS.ClearDataAfter / 5 
 		local lastCheck = time()
 		local lastCheckFinished = true
 		
@@ -1302,7 +1315,7 @@ function That:Start(options)
 					for _, event in pairs(service) do
 						for id, item in pairs(event.EventData) do
 							--Check if data has expired, if the data has been processed
-							if item.Processed and time() - item.Time >= options.ClearDataAfter then
+							if item.Processed and time() - item.Time >= THAT_OPTIONS.ClearDataAfter then
 								--Clear data
 								event.EventData[id] = nil
 							end
@@ -1321,7 +1334,7 @@ function That:Start(options)
 	
 	--Set attributes on Base folder
 	if not isClient then
-		THAT_BASE_DIR:SetAttribute("THAT_STARTED", true)
+		script:SetAttribute("THAT_STARTED", true)
 	end
 
 	--Log started if logging enabled
@@ -1330,6 +1343,12 @@ function That:Start(options)
 		print(message:format(CONST_THAT_LOG_PREFIX, FormatTime(os.clock() - start)))
 	end
 end
+
+--Configure framework to start with default settings
+That:Configure({})
+
+--Initialize the framework so it can be used
+That:Init()
 
 --And that's a wrap!
 return That
