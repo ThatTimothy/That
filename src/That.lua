@@ -594,6 +594,20 @@ function That:Configure(options)
 		CONST_THAT_LOG_PREFIX = options.LogPrefix
 	end
 	
+	--Validate References
+	if options.References then
+		--Allow references to be LazyLoaded (meaning they are required only once requested to be used)
+		for name, root in pairs(options.References) do
+			--Check for valid naming (Can't use stuff that already exists)
+			if not That[name] then
+				--Lazy load module scripts
+				That[name] = LazyLoadModule(root)
+			else
+				ErrorUp(string.format("Cannot use That.%s as a reference name, as it is already in use.", name))
+			end
+		end
+	end
+	
 	--Save options for use
 	THAT_OPTIONS = options
 end
@@ -1064,19 +1078,6 @@ function That:Init()
 		script:SetAttribute("THAT_INITED", false)
 		script:SetAttribute("THAT_STARTED", false)
 	end
-
-	--Allow references to be LazyLoaded (meaning they are required only once requested to be used)
-	if THAT_OPTIONS.References then
-		for name, root in pairs(THAT_OPTIONS.References) do
-			--Check for valid naming (Can't use stuff that already exists)
-			if not That[name] then
-				--Lazy load module scripts
-				That[name] = LazyLoadModule(root)
-			else
-				ErrorUp(string.format("Cannot use That.%s as a reference name, as it is already in use.", name))
-			end
-		end
-	end
 end
 
 -- Starts the framework
@@ -1381,4 +1382,4 @@ That:Init()
 return That
 
 --This & the content below is used for tracking the version & identifying That Framework. Do not modify these lines!
---[[THAT_FRAMEWORK_BASE | VERSION = 1.1.0]]--
+--[[THAT_FRAMEWORK_BASE | VERSION = 1.2.0]]--
