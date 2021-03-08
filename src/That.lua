@@ -1379,3 +1379,6 @@ That:Init()
 
 --And that's a wrap!
 return That
+
+--This & the content below is used for tracking the version & identifying That Framework. Do not modify these lines!
+--[[THAT_FRAMEWORK_BASE | VERSION = 1.1.0]]--
